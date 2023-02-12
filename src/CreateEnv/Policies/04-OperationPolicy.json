@@ -1,0 +1,6 @@
+{
+    "properties": {
+      "format": "xml",
+      "value": "<policies>  <inbound>    <base />    <rewrite-uri template=\"/WeatherForecastCity?City=Munich\" />  </inbound>  <backend>    <base />  </backend>  <outbound>    <base />  </outbound>  <on-error>    <base />  </on-error></policies>"
+    }
+}

@@ -1,0 +1,255 @@
+################################################
+# Step 1:   Logon to Azure; Get, Set subscription
+################################################
+# Login to subscription
+az login
+
+# Retrieve default subscription id
+$subscriptionId = (
+    (
+        az account list `
+            --query "[?isDefault]" 
+    ) | ConvertFrom-Json
+).id
+
+# Set Subscription
+az account set --subscription $subscriptionId
+
+################################################
+# Step 2:   Define project unifier
+################################################
+$random = Get-Random -Minimum 100 -Maximum 999
+
+################################################
+# Step 3:   Create Resource Group
+################################################
+$resourceGroup = "FTA.APIMSample$random"
+$location = "WestEurope"
+
+az group create `
+    --location $location `
+    --resource-group $resourceGroup
+
+
+################################################
+# Step 4:   Create APIM instance
+################################################
+$apimName = "ApimSample$random"
+$apimPublisherName = "PublisherName"
+$apimPublisherEMail = "sample@outlook.com"
+$apimSkuName = "Basic"
+$apimSkuCapacity = 1
+
+az apim create `
+    --name $apimName `
+    --resource-group $resourceGroup `
+    --location $location `
+    --publisher-name $apimPublisherName `
+    --publisher-email $apimPublisherEMail `
+    --sku-name $apimSkuName `
+    --sku-capacity $apimSkuCapacity `
+    --no-wait
+
+# Provisioning of the APIM instance might take some time
+# Wait until provisioningState == Succeeded
+az apim show `
+    --name $apimName `
+    --resource-group $resourceGroup `
+    --query "provisioningState" `
+    --output tsv
+
+################################################
+# Step 5    Create App Service Plan 
+################################################
+$appServicePlanName = "ApimSampleService"
+$appServicePlanSku = "B1"
+
+az appservice plan create `
+    --name $appServicePlanName `
+    --resource-group $resourceGroup `
+    --sku $appServicePlanSku `
+    --is-linux
+  
+################################################
+# Step 6    Create web app to host service app
+################################################
+$webAppName = "RobEichApimSampleService$random"
+$webAppRuntime = "DOTNETCORE:7.0"
+
+az webapp create `
+    --name $webAppName `
+    --resource-group $resourceGroup `
+    --plan $appServicePlanName `
+    --runtime $webAppRuntime
+
+
+################################################
+# Step 7:   Publish & deploy service app
+################################################
+# Publish service app locally
+$publishFolder = 'src/APIM.Service/publish'
+
+if (Test-Path $publishFolder) {
+    Remove-Item $publishFolder -Force -Recurse
+}
+
+dotnet publish src/APIM.Service/APIM.Service.csproj `
+    --output src/APIM.Service/publish
+
+# Compress publish artefacts
+Set-Location $publishFolder
+Compress-Archive `
+    -Path * `
+    -DestinationPath "$webAppName.zip" `
+    -Force
+Set-Location ..\..\..
+
+# Deploy compressed service app
+az webapp deploy `
+    --resource-group $resourceGroup `
+    --name $webAppName `
+    --src-path "$publishFolder/$webAppName.zip" `
+    --type "zip"
+
+# Restart web app
+az webapp restart `
+    --name $webAppName `
+    --resource-group $resourceGroup
+
+$webAppUrl = (
+    az webapp show `
+        --resource-group $resourceGroup `
+        --name $webAppName `
+        --query defaultHostName `
+        --output tsv
+)
+
+################################################
+# Step 8:   Import API from service app
+################################################
+$webApiSpecificationFormat = "OpenApi"
+$webApiSpecificationUrl = "https://$webAppUrl/swagger/v1/swagger.json"
+$apimPath = "/weather"
+$apimServiceUrl = "https://$webAppUrl"
+$apimApiId = "ApiId$random"
+
+az apim api import `
+    --resource-group $resourceGroup `
+    --service-name $apimName `
+    --specification-format $webApiSpecificationFormat `
+    --specification-url $webApiSpecificationUrl `
+    --service-ur $apimServiceUrl `
+    --api-id $apimApiId `
+    --path $apimPath
+
+################################################
+# Step 9:   Create product
+################################################
+$apimProductName = "Test Api$unifier"
+$apimProductId = "ApimProduct01$unifier"
+$apimProductDescription = "Demo APIM"
+
+az apim product create `
+    --resource-group $resourceGroup `
+    --product-name $apimProductName `
+    --description $apimProductDescription `
+    --product-id $apimProductId `
+    --service-name $apimName `
+    --subscription-required false `
+    --state published 
+
+
+################################################
+# Step 10:  Add API to product
+################################################
+$apimGroupApiId = "Apim.Service"
+$apimGroupApiProductId = "productId"
+
+az apim product api add `
+    --resource-group $resourceGroup `
+    --api-id $apimApiid `
+    --product-id $apimProductId `
+    --service-name $apimName
+
+
+################################################
+# Step 11:  Check Api Management 
+################################################
+$apimUrl = (az apim show `
+    --name $apimName `
+    --resource-group $resourceGroup `
+    --query gatewayUrl `
+    --output tsv )
+
+# Call Simple Get
+$apimServiceUrl = "$apimUrl$apimPath/WeatherForecast"
+curl --verbose $apimServiceUrl
+
+# Call Get with parameter
+$apimServiceUrlCity = "$apimUrl$apimPath/WeatherForecastCity?City=Munich"
+curl $apimServiceUrlCity
+
+
+################################################
+# Step 12:  Provide policies
+################################################
+# Update ALL API (global) policy definition 
+$url = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.ApiManagement/service/$apimName/policies/policy?api-version=2021-08-01"
+az rest `
+    --url $url `
+    --method "Put" `
+    --body @src/CreateEnv/Policies/01-GlobalPolicy.json
+
+# List ALL API (global) policy definition (XML)
+$url = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.ApiManagement/service/$apimName/policies/policy?api-version=2021-08-01"
+az rest `
+    --url $url `
+    --method "Get"
+
+# Update PRODUCT policy definition 
+$url = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.ApiManagement/service/$apimName/products/$apimProductId/policies/policy?api-version=2021-08-01"
+az rest `
+    --url $url `
+    --method "Put" `
+    --body @src/CreateEnv/Policies/02-ProductPolicy.json
+
+# List PRODUCT policy definition 
+$url = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.ApiManagement/service/$apimName/products/$apimProductId/policies/policy?api-version=2021-08-01"
+az rest `
+    --url $url `
+    --method "Get" 
+  
+# Update SPECIFIC API policy definition
+$url = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.ApiManagement/service/$apimName/apis/$apimApiId/policies/policy?api-version=2021-08-01"
+az rest `
+    --url $url `
+    --method "Put" `
+    --body @src/CreateEnv/Policies/03-SpecificApiPolicy.json
+
+# List SPECIFIC API policy definition (XML)
+$url = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.ApiManagement/service/$apimName/apis/$apimApiId/policies/policy?api-version=2021-08-01"
+az rest `
+    --url $url `
+    --method "Get" 
+  
+# Update API OPERATION policy definition
+$url = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.ApiManagement/service/$apimName//apis/$apimApiId/operations/$apimOperationId/policies/policy?api-version=2021-08-01"
+az rest `
+    --url $url `
+    --method "Put" `
+    --body @src/CreateEnv/Policies/04-OperationPolicy.json
+
+# List API OPERATION policy definition (XML)
+$url = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.ApiManagement/service/$apimName//apis/$apimApiId/operations/$apimOperationId/policies/policy?api-version=2021-08-01"
+az rest `
+    --url $url `
+    --method "Get" 
+
+
+################################################
+# Step 13:  Check policies
+################################################
+# Check if policies are applied    
+$apimServiceUrl = "$apimUrl$apimPath/WeatherForecast"
+curl --verbose $apimServiceUrl
+

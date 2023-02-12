@@ -1,0 +1,7 @@
+{  
+  "properties": {
+    "value": "<policies> <inbound /> <backend> <forward-request /> </backend> <outbound> <set-header name=\"APIM-AllApiScopePolicy\" exists-action=\"append\"> <value>Added on global level (all apis) </value> </set-header> <set-header name=\"APIM-Source-System\" exists-action=\"delete\" /> </outbound>  <on-error /></policies>",
+    "format": "xml"
+  }
+}
+

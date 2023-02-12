@@ -1,0 +1,6 @@
+{  
+  "properties": {
+    "value": "<policies> <inbound> <base /> </inbound> <backend> <base /> </backend> <outbound> <base /> <set-header name=\"APIM-ProductScopePolicy\" exists-action=\"append\"> <value>Added on Product Level</value> </set-header> </outbound> <on-error> <base /> </on-error> </policies>",
+    "format": "xml"
+  }
+}

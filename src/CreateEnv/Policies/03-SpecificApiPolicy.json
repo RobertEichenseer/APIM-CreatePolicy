@@ -1,0 +1,6 @@
+{  
+  "properties": {
+    "value": "<policies>  <inbound>    <base />  </inbound>  <backend>    <base />  </backend>  <outbound>    <base />    <set-header name=\"APIM-APIScopePolicy\" exists-action=\"append\">      <value>Added on Api level</value>    </set-header>  </outbound>  <on-error>    <base />  </on-error></policies>",
+    "format": "xml"
+  }
+}
